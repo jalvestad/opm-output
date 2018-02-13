@@ -363,7 +363,7 @@ RestartValue first_sim(const EclipseState& es, EclipseIO& eclWriter, bool write_
     eclWriter.writeTimeStep( 1,
                              false,
                              first_step - start_time,
-                             sol, wells , {}, {}, {}, {}, write_double);
+                             sol, wells , {}, {}, write_double);
 
     return { sol, wells , {}};
 }
@@ -484,6 +484,9 @@ BOOST_AUTO_TEST_CASE(WriteWrongSOlutionSize) {
         auto num_cells = setup.grid.getNumActive( ) + 1;
         auto cells = mkSolution( num_cells );
         auto wells = mkWells();
+	//jal
+	bool write_double; 
+	std::map<std::string , std::vector<double>> extra;
 
         BOOST_CHECK_THROW( RestartIO::save("FILE.UNRST", 1 ,
                                            100,
@@ -491,7 +494,9 @@ BOOST_AUTO_TEST_CASE(WriteWrongSOlutionSize) {
                                            wells ,
                                            setup.es,
                                            setup.grid ,
-                                           setup.schedule),
+                                           setup.schedule,
+					   extra,
+					   write_double),
                                            std::runtime_error);
     }
 }
@@ -504,7 +509,8 @@ BOOST_AUTO_TEST_CASE(ExtraData_KEYS) {
         auto num_cells = setup.grid.getNumActive( );
         auto cells = mkSolution( num_cells );
         auto wells = mkWells();
-
+	//jal
+	bool write_double;
         /* To fit with the eclipse format limitations the keys must be max 8 characters long. */
         {
             std::map<std::string , std::vector<double>> extra;
@@ -516,7 +522,8 @@ BOOST_AUTO_TEST_CASE(ExtraData_KEYS) {
                                                setup.es,
                                                setup.grid,
                                                setup.schedule,
-                                               extra),
+                                               extra,
+					       write_double),
                                std::runtime_error);
         }
 
@@ -531,7 +538,8 @@ BOOST_AUTO_TEST_CASE(ExtraData_KEYS) {
                                                setup.es,
                                                setup.grid,
                                                setup.schedule,
-                                               extra),
+                                               extra,
+					       write_double),
                                std::runtime_error);
         }
 
@@ -546,7 +554,8 @@ BOOST_AUTO_TEST_CASE(ExtraData_KEYS) {
                                                setup.es,
                                                setup.grid,
                                                setup.schedule,
-                                               extra),
+                                               extra,
+					       write_double),
                                std::runtime_error);
         }
     }
@@ -559,6 +568,8 @@ BOOST_AUTO_TEST_CASE(ExtraData_content) {
         auto num_cells = setup.grid.getNumActive( );
         auto cells = mkSolution( num_cells );
         auto wells = mkWells();
+	//jal
+	bool write_double;
         {
             std::map<std::string , std::vector<double>> extra;
             extra["EXTRA"] = {0,1,2,3};
@@ -569,7 +580,8 @@ BOOST_AUTO_TEST_CASE(ExtraData_content) {
                             setup.es,
                             setup.grid,
                             setup.schedule,
-                            extra);
+                            extra,
+			    write_double);
 
             {
                 ecl_file_type * f = ecl_file_open( "FILE.UNRST" , 0 );

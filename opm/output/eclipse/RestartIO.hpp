@@ -25,7 +25,22 @@
 
 #include <vector>
 #include <map>
+#include <cstddef>
+#include <time.h>
+#include <ctime>
+#include <cstring>
+#include <type_traits>
+#include <sys/types.h> 
+#include <sys/stat.h>
 
+//#ifndef ERT_VECTOR_H
+//#define ERT_VECTOR_H
+
+//#include <ert/util/node_data.h>
+//#include <ert/util/type_macros.h>
+//#include <ert/util/int_vector.h>
+
+//jal - comment on the following include to avoid duplication
 #include <opm/parser/eclipse/Units/UnitSystem.hpp>
 #include <opm/parser/eclipse/EclipseState/Runspec.hpp>
 #include <opm/parser/eclipse/EclipseState/Schedule/Well.hpp>
@@ -33,12 +48,15 @@
 #include <opm/output/data/Cells.hpp>
 #include <opm/output/data/Solution.hpp>
 #include <opm/output/data/Wells.hpp>
+#include <opm/output/eclipse/libECLRestart.hpp>
 #include <opm/output/eclipse/RestartValue.hpp>
 
-#include <ert/ecl/EclKW.hpp>
-#include <ert/ecl/ecl_rsthead.h>
-#include <ert/ecl/ecl_rst_file.h>
-#include <ert/util/util.h>
+//#include <ert/ecl/EclKW.hpp>
+#include <ert/ecl/FortIO.hpp>
+//#include <ert/ecl/ecl_rsthead.h>
+//#include <ert/ecl/ecl_rst_file.h>
+//#include <ert/util/util.h>
+#include <ert/ecl/fortio.h>
 
 namespace Opm {
 
@@ -49,29 +67,7 @@ class Schedule;
 
 namespace RestartIO {
 
-
-/*
-  The two loose functions RestartIO::save() and RestartIO::load() can
-  be used to save and load reservoir and well state from restart
-  files. Observe that these functions 'just do it', i.e. the checking
-  of which report step to load from, if output is enabled at all and
-  so on is handled by an outer scope.
-
-  If the filename corresponds to unified eclipse restart file,
-  i.e. UNRST the functions will seek correctly to the correct report
-  step, and truncate in the case of save. For any other filename the
-  functions will start reading and writing from file offset zero. If
-  the input filename does not correspond to a unified restart file
-  there is no consistency checking between filename and report step;
-  i.e. these calls:
-
-     load("CASE.X0010" , 99 , ...)
-     save("CASE.X0010" , 99 , ...)
-
-   will read and write to the file "CASE.X0010" - completely ignoring
-   the report step argument '99'.
-*/
-
+    
 void save(const std::string& filename,
           int report_step,
           double seconds_elapsed,
@@ -79,19 +75,21 @@ void save(const std::string& filename,
           data::Wells wells,
           const EclipseState& es,
           const EclipseGrid& grid,
-          const Schedule& schedule,
-          std::map<std::string, std::vector<double>> extra_data = {},
-	  bool write_double = false);
-
+	  const Schedule& schedule,
+          std::map<std::string, std::vector<double>> extra_data,
+	  bool write_double);
+// orig version jal  	  bool write_double = false);
+// orig version jal          std::map<std::string, std::vector<double>> extra_data = {},
 
 RestartValue load( const std::string& filename,
                    int report_step,
                    const std::map<std::string, RestartKey>& keys,
                    const EclipseState& es,
                    const EclipseGrid& grid,
-                   const Schedule& schedule,
-                   const std::map<std::string, bool>& extra_keys = {});
-
+		           const Schedule& schedule,
+                   const std::map<std::string, bool>& extra_keys);
+// orig version jal            const std::map<std::string, bool>& extra_keys = {});
+ 
 }
 }
-#endif
+#endif // RESTART_IO_HPP

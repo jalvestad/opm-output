@@ -20,39 +20,117 @@
   You should have received a copy of the GNU General Public License
   along with OPM.  If not, see <http://www.gnu.org/licenses/>.
 */
+#include <opm/output/eclipse/RestartIO.hpp>
 #include <string>
 #include <vector>
+#include <cstddef>
+#include <time.h>
+#include <ctime>
+#include <cstring>
+#include <stdlib.h> 
+#include <iostream>
+#include <stdio.h>
+#include <sys/stat.h>
+#include <fstream> 
+#include <fcntl.h>
+#include <cstdint>
+#include <cstdlib>
+#include <cstdarg>
+#include <cstdio>
+#include <stdarg.h>
+#include <assert.h>
+#include <signal.h>
+#include <pthread.h>
+//#include <ert/util/@TYPE@_vector.h>
+
+
+
+//  This function is purely a helper function for util_abort().
+// start define for util_abort
+//#define __USE_GNU       // Must be defined to get access to the dladdr() function; Man page says the symbol should be: _GNU_SOURCE but that does not seem to work?
+//#define _GNU_SOURCE     // Must be defined _before_ #include <errno.h> to get the symbol 'program_invocation_name'.
+
+//#include <errno.h>
+//#include <stdlib.h>
+//#include <string.h>
+
+//#include <ert/util/util.h>
+//#include <ert/util/test_util.h>
+
+//#include <stdbool.h>
+
+//#include <dlfcn.h>
+//#include <execinfo.h>
+//#include <pthread.h>
+//#include <pwd.h>
+//#include <signal.h>
+//#include <unistd.h>
+
+//#if !defined(__GLIBC__)         /* note: not same as __GNUC__ */
+//#  if defined (__APPLE__)
+//#    include <stdlib.h>         /* alloca   */
+//#    include <sys/syslimits.h>  /* PATH_MAX */
+//#    include <mach-o/dyld.h>    /* _NSGetExecutablePath */
+//#  elif defined (__LINUX__)
+//#    include <stdlib.h>         /* alloca   */
+//#    include <limits.h>         /* PATH_MAX */
+//#    include <unistd.h>         /* readlink */
+//#  else
+//#    error No known program_invocation_name in runtime library
+//#  endif
+//#endif  
 
 #include <opm/parser/eclipse/EclipseState/Grid/EclipseGrid.hpp>
 #include <opm/parser/eclipse/EclipseState/EclipseState.hpp>
 #include <opm/parser/eclipse/EclipseState/Schedule/Schedule.hpp>
 
-#include <opm/output/eclipse/RestartIO.hpp>
+#include <opm/output/eclipse/libECLRestart.hpp>
 
-#include <ert/ecl/EclKW.hpp>
+//#include <ert/ecl/EclKW.hpp>
 #include <ert/ecl/FortIO.hpp>
 #include <ert/ecl/EclFilename.hpp>
-#include <ert/ecl/ecl_kw_magic.h>
-#include <ert/ecl/ecl_init_file.h>
-#include <ert/ecl/ecl_file.h>
-#include <ert/ecl/ecl_kw.h>
-#include <ert/ecl/ecl_type.h>
-#include <ert/ecl/ecl_grid.h>
-#include <ert/ecl/ecl_util.h>
-#include <ert/ecl/ecl_rft_file.h>
-#include <ert/ecl/ecl_file_view.h>
-#include <ert/ecl_well/well_const.h>
-#include <ert/ecl/ecl_rsthead.h>
-#include <ert/util/util.h>
+//#include <ert/ecl/ecl_kw_magic.h>
+//#include <ert/ecl/ecl_init_file.h>
+//#include <ert/ecl/ecl_file.h>
+//#include <ert/ecl/ecl_kw.h>
+//#include <ert/ecl/ecl_type.h>
+//#include <ert/ecl/ecl_grid.h>
+//#include <ert/ecl/ecl_util.h>
+//#include <ert/ecl/ecl_rft_file.h>
+//#include <ert/ecl/ecl_file_view.h>
+//#include <ert/ecl_well/well_const.h>
+//#include <ert/ecl/ecl_rsthead.h>
+//#include <ert/util/util.h>
+#include <ert/ecl/fortio.h>
 #define OPM_XWEL      "OPM_XWEL"
 #define OPM_IWEL      "OPM_IWEL"
+#define IWEL_KW      "IWEL"
+#define ZWEL_KW      "ZWEL"
+#define ICON_KW      "ICON"
+
+
+namespace {
+    Opm::UnitSystem::UnitType
+    getUnitSystem(const Opm::RestartIO::ecl_kw_type* intehead)
+    {
+        using UType = Opm::UnitSystem::UnitType;
+
+        //switch (Opm::RestartIO::ecl_kw_iget_int(intehead, INTEHEAD_UNIT_INDEX)) {
+	switch (Opm::RestartIO::ecl_kw_iget_type<int>(intehead, Opm::RestartIO::ECL_INT_TYPE, INTEHEAD_UNIT_INDEX)) {
+        case 1: return UType::UNIT_TYPE_METRIC;
+        case 2: return UType::UNIT_TYPE_FIELD;
+        case 3: return UType::UNIT_TYPE_LAB;
+        case 4: return UType::UNIT_TYPE_PVT_M;
+        }
+
+        return UType::UNIT_TYPE_METRIC; // questionable…
+    }
+}
 
 namespace Opm {
 namespace RestartIO  {
 
-
-
-namespace {
+//namespace {
 
     static const int NIWELZ = 11; //Number of data elements per well in IWEL array in restart file
     static const int NZWELZ = 3;  //Number of 8-character words per well in ZWEL array restart file
@@ -88,21 +166,23 @@ namespace {
         }
     }
 
-    std::vector<double> double_vector( const ecl_kw_type * ecl_kw ) {
-        size_t size = ecl_kw_get_size( ecl_kw );
+  std::vector<double> double_vector( const ::Opm::RestartIO::ecl_kw_type * ecl_kw ) {
+        size_t size = ::Opm::RestartIO::ecl_kw_get_size( ecl_kw );
 
-        if (ecl_type_get_type( ecl_kw_get_data_type( ecl_kw ) ) == ECL_DOUBLE_TYPE ) {
-            const double * ecl_data = ecl_kw_get_double_ptr( ecl_kw );
+        if (::Opm::RestartIO::ecl_type_get_type( ::Opm::RestartIO::ecl_kw_get_data_type( ecl_kw ) ) == ECL_DOUBLE_TYPE ) {
+            //const double * ecl_data = ::Opm::RestartIO::ecl_kw_get_double_ptr( ecl_kw );
+            const double * ecl_data = ::Opm::RestartIO::ecl_kw_get_type_ptr<double>( ecl_kw, ECL_DOUBLE_TYPE );
             return { ecl_data , ecl_data + size };
         } else {
-            const float * ecl_data = ecl_kw_get_float_ptr( ecl_kw );
+            //const float * ecl_data = ::Opm::RestartIO::ecl_kw_get_float_ptr( ecl_kw );
+	    const float * ecl_data = ::Opm::RestartIO::ecl_kw_get_type_ptr<float>( ecl_kw, ECL_FLOAT_TYPE );
             return { ecl_data , ecl_data + size };
         }
 
     }
 
 
-    inline data::Solution restoreSOLUTION( ecl_file_view_type* file_view,
+  inline data::Solution restoreSOLUTION( ::Opm::RestartIO::ecl_file_view_type* file_view,
                                            const std::map<std::string, RestartKey>& keys,
                                            const UnitSystem& units,
                                            int numcells) {
@@ -113,7 +193,7 @@ namespace {
             UnitSystem::measure dim = pair.second.dim;
             bool required = pair.second.required;
 
-            if( !ecl_file_view_has_kw( file_view, key.c_str() ) ) {
+            if( !::Opm::RestartIO::ecl_file_view_has_kw( file_view, key.c_str() ) ) {
                 if (required)
                     throw std::runtime_error("Read of restart file: "
                                              "File does not contain "
@@ -123,13 +203,13 @@ namespace {
                     continue;
             }
 
-            const ecl_kw_type * ecl_kw = ecl_file_view_iget_named_kw( file_view , key.c_str() , 0 );
-            if( ecl_kw_get_size(ecl_kw) != numcells)
+            const Opm::RestartIO::ecl_kw_type * ecl_kw = ::Opm::RestartIO::ecl_file_view_iget_named_kw( file_view , key.c_str() , 0 );
+            if( Opm::RestartIO::ecl_kw_get_size(ecl_kw) != numcells)
                 throw std::runtime_error("Restart file: Could not restore "
-                                         + std::string( ecl_kw_get_header( ecl_kw ) )
+                                         + std::string( Opm::RestartIO::ecl_kw_get_header( ecl_kw ) )
                                          + ", mismatched number of cells" );
 
-            std::vector<double> data = double_vector( ecl_kw );
+            std::vector<double> data = ::Opm::RestartIO::double_vector( ecl_kw );
             units.to_si( dim , data );
 
             sol.insert( key, dim, data , data::TargetType::RESTART_SOLUTION );
@@ -140,13 +220,14 @@ namespace {
 
 
 using rt = data::Rates::opt;
-data::Wells restore_wells( const ecl_kw_type * opm_xwel,
-                           const ecl_kw_type * opm_iwel,
+data::Wells restore_wells( const ::Opm::RestartIO::ecl_kw_type * opm_xwel,
+                           const ::Opm::RestartIO::ecl_kw_type * opm_iwel,
                            int restart_step,
                            const EclipseState& es,
                            const EclipseGrid& grid,
-                           const Schedule& schedule) {
+			   const Schedule& schedule) {
 
+    //const auto& sched_wells = es.getSchedule().getWells( restart_step );
     const auto& sched_wells = schedule.getWells( restart_step );
     std::vector< rt > phases;
     {
@@ -168,22 +249,24 @@ data::Wells restore_wells( const ecl_kw_type * opm_xwel,
                                                      0,
                                                      well_size );
 
-    if( ecl_kw_get_size( opm_xwel ) != expected_xwel_size ) {
+    if( ::Opm::RestartIO::ecl_kw_get_size( opm_xwel ) != expected_xwel_size ) {
         throw std::runtime_error(
                 "Mismatch between OPM_XWEL and deck; "
-                "OPM_XWEL size was " + std::to_string( ecl_kw_get_size( opm_xwel ) ) +
+                "OPM_XWEL size was " + std::to_string( ::Opm::RestartIO::ecl_kw_get_size( opm_xwel ) ) +
                 ", expected " + std::to_string( expected_xwel_size ) );
     }
 
-    if( ecl_kw_get_size( opm_iwel ) != int(sched_wells.size()) )
+    if( ::Opm::RestartIO::ecl_kw_get_size( opm_iwel ) != int(sched_wells.size()) )
         throw std::runtime_error(
                 "Mismatch between OPM_IWEL and deck; "
-                "OPM_IWEL size was " + std::to_string( ecl_kw_get_size( opm_iwel ) ) +
+                "OPM_IWEL size was " + std::to_string( ::Opm::RestartIO::ecl_kw_get_size( opm_iwel ) ) +
                 ", expected " + std::to_string( sched_wells.size() ) );
 
     data::Wells wells;
-    const double * opm_xwel_data = ecl_kw_get_double_ptr( opm_xwel );
-    const int * opm_iwel_data = ecl_kw_get_int_ptr( opm_iwel );
+    //const double * opm_xwel_data = ::Opm::RestartIO::ecl_kw_get_double_ptr( opm_xwel );
+    const double * opm_xwel_data = ::Opm::RestartIO::ecl_kw_get_type_ptr<double>( opm_xwel, ECL_DOUBLE_TYPE );
+    //const int * opm_iwel_data = ::Opm::RestartIO::ecl_kw_get_int_ptr( opm_iwel );
+    const int * opm_iwel_data = ::Opm::RestartIO::ecl_kw_get_type_ptr<int>( opm_iwel, ECL_INT_TYPE );
     for( const auto* sched_well : sched_wells ) {
         data::Well& well = wells[ sched_well->name() ];
 
@@ -215,49 +298,52 @@ data::Wells restore_wells( const ecl_kw_type * opm_xwel,
 
     return wells;
 }
-}
+//}
 
-/* should take grid as argument because it may be modified from the simulator */
+
+//* should take grid as argument because it may be modified from the simulator */
 RestartValue load( const std::string& filename,
                    int report_step,
                    const std::map<std::string, RestartKey>& keys,
                    const EclipseState& es,
                    const EclipseGrid& grid,
-                   const Schedule& schedule,
+		   const Schedule& schedule,
                    const std::map<std::string, bool>& extra_keys) {
 
-    const bool unified                   = ( ERT::EclFiletype( filename ) == ECL_UNIFIED_RESTART_FILE );
-    ERT::ert_unique_ptr< ecl_file_type, ecl_file_close > file(ecl_file_open( filename.c_str(), 0 ));
-    ecl_file_view_type * file_view;
+    const bool unified                   = ( ::Opm::RestartIO::EclFiletype( filename ) == ::Opm::RestartIO::ECL_UNIFIED_RESTART_FILE );
+    ::Opm::RestartIO::ert_unique_ptr< ::Opm::RestartIO::ecl_file_type, ::Opm::RestartIO::ecl_file_close > file(::Opm::RestartIO::ecl_file_open( filename.c_str(), 0 ));
+    ::Opm::RestartIO::ecl_file_view_type * file_view;
 
     if( !file )
         throw std::runtime_error( "Restart file " + filename + " not found!" );
 
     if( unified ) {
-        file_view = ecl_file_get_restart_view( file.get() , -1 , report_step , -1 , -1 );
+        file_view = ::Opm::RestartIO::ecl_file_get_restart_view( file.get() , -1 , report_step , -1 , -1 );
         if (!file_view)
             throw std::runtime_error( "Restart file " + filename
                                       + " does not contain data for report step "
                                       + std::to_string( report_step ) + "!" );
     } else
-        file_view = ecl_file_get_global_view( file.get() );
+        file_view = ::Opm::RestartIO::ecl_file_get_global_view( file.get() );
 
-    const ecl_kw_type * intehead = ecl_file_view_iget_named_kw( file_view , "INTEHEAD", 0 );
-    const ecl_kw_type * opm_xwel = ecl_file_view_iget_named_kw( file_view , "OPM_XWEL", 0 );
-    const ecl_kw_type * opm_iwel = ecl_file_view_iget_named_kw( file_view, "OPM_IWEL", 0 );
-
-    UnitSystem units( static_cast<ert_ecl_unit_enum>(ecl_kw_iget_int( intehead , INTEHEAD_UNIT_INDEX )));
-    RestartValue rst_value( restoreSOLUTION( file_view, keys, units , grid.getNumActive( )),
-                            restore_wells( opm_xwel, opm_iwel, report_step , es, grid, schedule));
+    const ::Opm::RestartIO::ecl_kw_type * intehead = ::Opm::RestartIO::ecl_file_view_iget_named_kw( file_view , "INTEHEAD", 0 );
+    const ::Opm::RestartIO::ecl_kw_type * opm_xwel = ::Opm::RestartIO::ecl_file_view_iget_named_kw( file_view , "OPM_XWEL", 0 );
+    const ::Opm::RestartIO::ecl_kw_type * opm_iwel = ::Opm::RestartIO::ecl_file_view_iget_named_kw( file_view, "OPM_IWEL", 0 );
+    //UnitSystem units( static_cast<::Opm::RestartIO::ert_ecl_unit_enum>(::Opm::RestartIO::ecl_kw_iget_int( intehead , INTEHEAD_UNIT_INDEX )));
+    //UnitSystem units( static_cast<::Opm::RestartIO::ert_ecl_unit_enum>(::Opm::RestartIO::ecl_kw_iget_type<int>( intehead , ECL_INT_TYPE, INTEHEAD_UNIT_INDEX )));
+    UnitSystem units(getUnitSystem(intehead));
+    RestartValue rst_value( ::Opm::RestartIO::restoreSOLUTION( file_view, keys, units , grid.getNumActive( )),
+                            ::Opm::RestartIO::restore_wells( opm_xwel, opm_iwel, report_step , es, grid, schedule));
 
     for (const auto& pair : extra_keys) {
         const std::string& key = pair.first;
         bool required = pair.second;
 
         if (ecl_file_view_has_kw( file_view , key.c_str())) {
-            const ecl_kw_type * ecl_kw = ecl_file_view_iget_named_kw( file_view , key.c_str() , 0 );
-            const double * data_ptr = ecl_kw_get_double_ptr( ecl_kw );
-            const double * end_ptr  = data_ptr + ecl_kw_get_size( ecl_kw );
+            const ::Opm::RestartIO::ecl_kw_type * ecl_kw = ::Opm::RestartIO::ecl_file_view_iget_named_kw( file_view , key.c_str() , 0 );
+            //const double * data_ptr = ::Opm::RestartIO::ecl_kw_get_double_ptr( ecl_kw );
+            const double * data_ptr = ::Opm::RestartIO::ecl_kw_get_type_ptr<double>( ecl_kw, ECL_DOUBLE_TYPE );
+            const double * end_ptr  = data_ptr + ::Opm::RestartIO::ecl_kw_get_size( ecl_kw );
             rst_value.extra[ key ] = { data_ptr, end_ptr };
         } else if (required)
             throw std::runtime_error("No such key in file: " + key);
@@ -267,11 +353,8 @@ RestartValue load( const std::string& filename,
     return rst_value;
 }
 
+//namespace {
 
-
-
-
-namespace {
 
 std::vector<int> serialize_ICON( int report_step,
                                  int ncwmax,
@@ -426,16 +509,12 @@ std::vector<const char*> serialize_ZWEL( const std::vector<const Well *>& wells)
     return data;
 }
 
-
-
-
-
 template< typename T >
-void write_kw(ecl_rst_file_type * rst_file , ERT::EclKW< T >&& kw) {
-    ecl_rst_file_add_kw( rst_file, kw.get() );
+void write_kw(::Opm::RestartIO::ecl_rst_file_type * rst_file , Opm::RestartIO::EclKW< T >&& kw) {
+  ::Opm::RestartIO::ecl_rst_file_add_kw( rst_file, kw.get() );
 }
 
-void writeHeader(ecl_rst_file_type * rst_file,
+void writeHeader(::Opm::RestartIO::ecl_rst_file_type * rst_file,
                  int report_step,
                  time_t posix_time,
                  double sim_days,
@@ -444,7 +523,7 @@ void writeHeader(ecl_rst_file_type * rst_file,
                  const Schedule& schedule,
                  const EclipseGrid& grid) {
 
-    ecl_rsthead_type rsthead_data = {};
+    Opm::RestartIO::ecl_rsthead_type rsthead_data = {};
 
     rsthead_data.sim_time    = posix_time;
     rsthead_data.nactive     = grid.getNumActive();
@@ -459,25 +538,28 @@ void writeHeader(ecl_rst_file_type * rst_file,
     rsthead_data.phase_sum   = ert_phase_mask;
     rsthead_data.sim_days    = sim_days;
     rsthead_data.unit_system = units.getEclType( );
-
-    ecl_util_set_date_values( rsthead_data.sim_time,
+    
+    // this function should be moved to opm (does not need to be changed)
+    ::Opm::RestartIO::ecl_util_set_date_values( rsthead_data.sim_time,
                               &rsthead_data.day,
                               &rsthead_data.month,
                               &rsthead_data.year );
 
-    ecl_rst_file_fwrite_header( rst_file, report_step , &rsthead_data );
+    ::Opm::RestartIO::ecl_rst_file_fwrite_header( rst_file, report_step , &rsthead_data );
 }
 
-  ERT::ert_unique_ptr< ecl_kw_type, ecl_kw_free > ecl_kw( const std::string& kw, const std::vector<double>& data, bool write_double) {
-      ERT::ert_unique_ptr< ecl_kw_type, ecl_kw_free > kw_ptr;
+
+  ::Opm::RestartIO::ert_unique_ptr< ::Opm::RestartIO::ecl_kw_type, ecl_kw_free > ecl_kw( const std::string& kw, const std::vector<double>& data, bool write_double) {
+    Opm::RestartIO::ert_unique_ptr< ::Opm::RestartIO::ecl_kw_type, ecl_kw_free > kw_ptr;
 
       if (write_double) {
-	  ecl_kw_type * ecl_kw = ecl_kw_alloc( kw.c_str() , data.size() , ECL_DOUBLE );
-	  ecl_kw_set_memcpy_data( ecl_kw , data.data() );
+	::Opm::RestartIO::ecl_kw_type * ecl_kw = ::Opm::RestartIO::ecl_kw_alloc( kw.c_str() , data.size() , ECL_DOUBLE );
+	  ::Opm::RestartIO::ecl_kw_set_memcpy_data( ecl_kw , data.data() );
 	  kw_ptr.reset( ecl_kw );
       } else {
-	  ecl_kw_type * ecl_kw = ecl_kw_alloc( kw.c_str() , data.size() , ECL_FLOAT );
-	  float * float_data = ecl_kw_get_float_ptr( ecl_kw );
+	::Opm::RestartIO::ecl_kw_type * ecl_kw = ::Opm::RestartIO::ecl_kw_alloc( kw.c_str() , data.size() , ECL_FLOAT );
+	  //float * float_data = ecl_kw_get_float_ptr( ecl_kw );
+	  float * float_data = ecl_kw_get_type_ptr<float>( ecl_kw, ECL_FLOAT_TYPE );
 	  for (size_t i=0; i < data.size(); i++)
 	      float_data[i] = data[i];
 	  kw_ptr.reset( ecl_kw );
@@ -487,37 +569,37 @@ void writeHeader(ecl_rst_file_type * rst_file,
   }
 
 
-
-  void writeSolution(ecl_rst_file_type* rst_file, const data::Solution& solution, bool write_double) {
-    ecl_rst_file_start_solution( rst_file );
+  void writeSolution(::Opm::RestartIO::ecl_rst_file_type* rst_file, const data::Solution& solution, bool write_double) {
+    ::Opm::RestartIO::ecl_rst_file_start_solution( rst_file );
     for (const auto& elm: solution) {
         if (elm.second.target == data::TargetType::RESTART_SOLUTION)
-            ecl_rst_file_add_kw( rst_file , ecl_kw(elm.first, elm.second.data, write_double).get());
+            ::Opm::RestartIO::ecl_rst_file_add_kw( rst_file , ecl_kw(elm.first, elm.second.data, write_double).get());
      }
-     ecl_rst_file_end_solution( rst_file );
+     ::Opm::RestartIO::ecl_rst_file_end_solution( rst_file );
 
      for (const auto& elm: solution) {
         if (elm.second.target == data::TargetType::RESTART_AUXILIARY)
-            ecl_rst_file_add_kw( rst_file , ecl_kw(elm.first, elm.second.data, write_double).get());
+            ::Opm::RestartIO::ecl_rst_file_add_kw( rst_file , ecl_kw(elm.first, elm.second.data, write_double).get());
      }
   }
 
 
-void writeExtraData(ecl_rst_file_type* rst_file, const std::map<std::string,std::vector<double>>& extra_data) {
+void writeExtraData(::Opm::RestartIO::ecl_rst_file_type* rst_file, const std::map<std::string,std::vector<double>>& extra_data) {
     for (const auto& pair : extra_data) {
         const std::string& key = pair.first;
         const std::vector<double>& data = pair.second;
         {
-            ecl_kw_type * ecl_kw = ecl_kw_alloc_new_shared( key.c_str() , data.size() , ECL_DOUBLE , const_cast<double *>(data.data()));
-            ecl_rst_file_add_kw( rst_file , ecl_kw);
-            ecl_kw_free( ecl_kw );
+            ::Opm::RestartIO::ecl_kw_type * ecl_kw = ::Opm::RestartIO::ecl_kw_alloc_new_shared( key.c_str() , data.size() , ECL_DOUBLE , const_cast<double *>(data.data()));
+            ::Opm::RestartIO::ecl_rst_file_add_kw( rst_file , ecl_kw);
+            ::Opm::RestartIO::ecl_kw_free( ecl_kw );
         }
     }
 }
 
 
+void writeWell(::Opm::RestartIO::ecl_rst_file_type* rst_file, int report_step, const EclipseState& es , const EclipseGrid& grid, const Schedule& schedule, const data::Wells& wells) {
 
-void writeWell(ecl_rst_file_type* rst_file, int report_step, const EclipseState& es , const EclipseGrid& grid, const Schedule& schedule, const data::Wells& wells) {
+    //const auto& schedule = es.getSchedule();
     const auto sched_wells  = schedule.getWells(report_step);
     const auto& phases = es.runspec().phases();
     const size_t ncwmax = schedule.getMaxNumCompletionsForWells(report_step);
@@ -528,11 +610,11 @@ void writeWell(ecl_rst_file_type* rst_file, int report_step, const EclipseState&
     const auto icon_data = serialize_ICON(report_step , ncwmax, sched_wells);
     const auto zwel_data = serialize_ZWEL( sched_wells );
 
-    write_kw( rst_file, ERT::EclKW< int >( IWEL_KW, iwel_data) );
-    write_kw( rst_file, ERT::EclKW< const char* >(ZWEL_KW, zwel_data ) );
-    write_kw( rst_file, ERT::EclKW< double >( OPM_XWEL, opm_xwel ) );
-    write_kw( rst_file, ERT::EclKW< int >( OPM_IWEL, opm_iwel ) );
-    write_kw( rst_file, ERT::EclKW< int >( ICON_KW, icon_data ) );
+    ::Opm::RestartIO::write_kw( rst_file, ::Opm::RestartIO::EclKW< int >( IWEL_KW, iwel_data) );
+    ::Opm::RestartIO::write_kw( rst_file, ::Opm::RestartIO::EclKW< const char* >(ZWEL_KW, zwel_data ) );
+    ::Opm::RestartIO::write_kw( rst_file, ::Opm::RestartIO::EclKW< double >( OPM_XWEL, opm_xwel ) );
+    ::Opm::RestartIO::write_kw( rst_file, ::Opm::RestartIO::EclKW< int >( OPM_IWEL, opm_iwel ) );
+    ::Opm::RestartIO::write_kw( rst_file, ::Opm::RestartIO::EclKW< int >( ICON_KW, icon_data ) );
 }
 
 void checkSaveArguments(const data::Solution& cells,
@@ -557,7 +639,9 @@ void checkSaveArguments(const data::Solution& cells,
         if (elm.second.data.size() != grid.getNumActive())
             throw std::runtime_error("Wrong size on solution vector: " + elm.first);
 }
-}
+
+
+//}
 
 
 void save(const std::string& filename,
@@ -567,31 +651,32 @@ void save(const std::string& filename,
           data::Wells wells,
           const EclipseState& es,
           const EclipseGrid& grid,
-          const Schedule& schedule,
+	  const Schedule& schedule,
           std::map<std::string, std::vector<double>> extra_data,
 	  bool write_double)
 {
-    checkSaveArguments( cells, grid, extra_data );
+    ::Opm::RestartIO::checkSaveArguments( cells, grid, extra_data );
     {
         int ert_phase_mask = es.runspec().eclPhaseMask( );
+        //const Schedule& schedule = es.getSchedule();
         const auto& units = es.getUnits();
         time_t posix_time = schedule.posixStartTime() + seconds_elapsed;
         const auto sim_time = units.from_si( UnitSystem::measure::time, seconds_elapsed );
-        ERT::ert_unique_ptr< ecl_rst_file_type, ecl_rst_file_close > rst_file;
+        ::Opm::RestartIO::ert_unique_ptr< ::Opm::RestartIO::ecl_rst_file_type, ecl_rst_file_close > rst_file;
 
-        if (ERT::EclFiletype( filename ) == ECL_UNIFIED_RESTART_FILE)
-            rst_file.reset( ecl_rst_file_open_write_seek( filename.c_str(), report_step ) );
+        if (::Opm::RestartIO::EclFiletype( filename ) == ECL_UNIFIED_RESTART_FILE)
+	  rst_file.reset( ::Opm::RestartIO::ecl_rst_file_open_write_seek( filename.c_str(), report_step ) );
         else
-            rst_file.reset( ecl_rst_file_open_write( filename.c_str() ) );
+	  rst_file.reset( ::Opm::RestartIO::ecl_rst_file_open_write( filename.c_str() ) );
 
 
         cells.convertFromSI( units );
-        writeHeader( rst_file.get() , report_step, posix_time , sim_time, ert_phase_mask, units, schedule , grid );
-        writeWell( rst_file.get() , report_step, es , grid, schedule, wells);
-        writeSolution( rst_file.get() , cells , write_double );
-        writeExtraData( rst_file.get() , extra_data );
+        ::Opm::RestartIO::writeHeader(rst_file.get() , report_step, posix_time , sim_time, ert_phase_mask, units, schedule , grid );
+        ::Opm::RestartIO::writeWell( rst_file.get() , report_step, es , grid, schedule, wells);
+        ::Opm::RestartIO::writeSolution( rst_file.get() , cells , write_double );
+        ::Opm::RestartIO::writeExtraData( rst_file.get() , extra_data );
     }
 }
-}
-}
 
+}
+}

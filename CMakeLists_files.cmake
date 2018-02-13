@@ -8,6 +8,7 @@ list( APPEND MAIN_SOURCE_FILES
         opm/test_util/EclFilesComparator.cpp
         opm/output/eclipse/EclipseGridInspector.cpp
         opm/output/eclipse/EclipseIO.cpp
+        opm/output/eclipse/libECLRestart.cpp
         opm/output/eclipse/LinearisedOutputTable.cpp
         opm/output/eclipse/RestartIO.cpp
         opm/output/eclipse/Summary.cpp
@@ -26,6 +27,7 @@ list (APPEND PUBLIC_HEADER_FILES
         opm/output/eclipse/EclipseGridInspector.hpp
         opm/output/eclipse/EclipseIOUtil.hpp
         opm/output/eclipse/EclipseIO.hpp
+        opm/output/eclipse/libECLRestart.hpp
         opm/output/eclipse/LinearisedOutputTable.hpp
         opm/output/eclipse/RestartIO.hpp
         opm/output/eclipse/RestartValue.hpp
